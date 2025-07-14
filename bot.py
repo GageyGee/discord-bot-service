@@ -7,6 +7,8 @@ import json
 from datetime import datetime
 
 import discord
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +21,11 @@ logger = logging.getLogger(__name__)
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Your Vercel API endpoint
 GUILD_ID = os.getenv('GUILD_ID')  # Optional: Specific Discord Server ID to monitor
+
+# Firebase Configuration - Add these to your Render environment variables
+FIREBASE_PRIVATE_KEY = os.getenv('FIREBASE_PRIVATE_KEY', '').replace('\\n', '\n')
+FIREBASE_PROJECT_ID = os.getenv('FIREBASE_PROJECT_ID')
+FIREBASE_CLIENT_EMAIL = os.getenv('FIREBASE_CLIENT_EMAIL')
 
 # Channel configuration - ONLY these channels will be monitored
 CHANNEL_NAMES = {
@@ -38,13 +45,113 @@ CHANNEL_NAMES = {
     1316784867962519603: "SECRET SOCIETY",
 }
 
+# Map Discord channel IDs to Firebase channel IDs
+CHANNEL_ID_MAPPING = {
+    1251179699674288208: "shocked",
+    1251848915305631834: "vanquish", 
+    1250885750158000203: "digi",
+    1323011103894016133: "pastel",
+    1358931443786584144: "cryptic",
+    1256632909008339035: "yogurtverse",
+    1319692012261347360: "heaven_or_hell",
+    1316031095497818143: "minted",
+    1392587523838185592: "serenity",
+    1302921864540323861: "technical_alpha",
+    1307140339991183380: "pf_trenches",
+    1304074398185029632: "potion",
+    1250885751768481849: "prosperity_dao",
+    1316784867962519603: "secret_society",
+}
+
+# Initialize Firebase
+db = None
+
+def initialize_firebase():
+    """Initialize Firebase Admin SDK"""
+    global db
+    
+    if not all([FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY]):
+        logger.error("❌ Missing Firebase configuration. Please set environment variables.")
+        return False
+    
+    try:
+        # Create credentials from environment variables
+        cred_dict = {
+            "type": "service_account",
+            "project_id": FIREBASE_PROJECT_ID,
+            "private_key": FIREBASE_PRIVATE_KEY,
+            "client_email": FIREBASE_CLIENT_EMAIL,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+        
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        
+        logger.info("✅ Firebase initialized successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Firebase: {e}")
+        return False
+
+async def add_message_to_firebase(channel_id, message_data):
+    """Add message to Firebase Firestore"""
+    if not db:
+        logger.error("Firebase not initialized")
+        return False
+    
+    try:
+        # Get the internal channel ID
+        internal_channel_id = CHANNEL_ID_MAPPING.get(int(channel_id))
+        if not internal_channel_id:
+            logger.error(f"No mapping found for channel {channel_id}")
+            return False
+        
+        # Format message for Firebase
+        firebase_message = {
+            'content': message_data.get('content', ''),
+            'author': {
+                'name': message_data['author_name'],
+                'avatar': message_data.get('author_avatar'),
+                'bot': message_data.get('is_bot', False),
+                'wallet': None  # Only for user messages
+            },
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'attachments': message_data.get('attachments', []),
+            'embeds': message_data.get('embeds', []),
+            'reply': message_data.get('reply')
+        }
+        
+        # Add to Firestore
+        doc_ref = db.collection('channels').document(internal_channel_id).collection('messages').document()
+        doc_ref.set(firebase_message)
+        
+        # Clean up old messages (keep only last 100)
+        try:
+            messages_ref = db.collection('channels').document(internal_channel_id).collection('messages')
+            old_messages = list(messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).offset(100).stream())
+            
+            for msg in old_messages:
+                msg.reference.delete()
+        except Exception as cleanup_error:
+            logger.warning(f"Could not clean up old messages: {cleanup_error}")
+        
+        logger.info(f"✅ Message added to Firebase for channel {internal_channel_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error adding message to Firebase: {e}")
+        return False
+
 # Discord client setup
 discord_client = discord.Client()
 
 async def send_to_vercel(message_data):
-    """Send message data to Vercel API"""
+    """Send message data to Vercel API (keep for backup)"""
     if not WEBHOOK_URL:
-        logger.error("WEBHOOK_URL not configured")
+        logger.warning("WEBHOOK_URL not configured")
         return
     
     try:
@@ -60,8 +167,6 @@ async def send_to_vercel(message_data):
                 else:
                     error_text = await response.text()
                     logger.error(f"❌ Failed to send to Vercel: {response.status} - {error_text}")
-    except asyncio.TimeoutError:
-        logger.error("❌ Timeout sending to Vercel")
     except Exception as e:
         logger.error(f"❌ Error sending to Vercel: {e}")
 
@@ -82,6 +187,19 @@ def format_message_for_api(message: discord.Message) -> dict:
                 "is_image": is_image,
                 "size": attachment.size
             })
+
+    # Process embeds (for bots like Rick, Utrax RepBot)
+    embeds = []
+    if message.embeds:
+        for embed in message.embeds:
+            embed_data = {
+                "title": embed.title,
+                "description": embed.description,
+                "url": embed.url,
+                "image": {"url": embed.image.url} if embed.image else None,
+                "thumbnail": {"url": embed.thumbnail.url} if embed.thumbnail else None
+            }
+            embeds.append(embed_data)
 
     # Clean content
     cleaned_content = message.content or ""
@@ -111,7 +229,9 @@ def format_message_for_api(message: discord.Message) -> dict:
         "timestamp": message.created_at.isoformat(),
         "message_id": str(message.id),
         "attachments": attachments,
-        "reply": reply_info
+        "embeds": embeds,
+        "reply": reply_info,
+        "is_bot": message.author.bot
     }
 
 @discord_client.event
@@ -119,7 +239,13 @@ async def on_ready():
     logger.info(f"🤖 Discord client `{discord_client.user}` logged in")
     logger.info(f"🔗 Connected to {len(discord_client.guilds)} guilds")
     logger.info(f"🎯 Monitoring {len(CHANNEL_NAMES)} channels")
-    logger.info(f"📡 Webhook URL: {WEBHOOK_URL}")
+    
+    # Initialize Firebase
+    firebase_success = initialize_firebase()
+    if firebase_success:
+        logger.info("🔥 Firebase integration active")
+    else:
+        logger.warning("⚠️ Firebase integration failed - using Vercel only")
     
     if GUILD_ID:
         logger.info(f"🏠 Targeting specific guild ID: {GUILD_ID}")
@@ -171,7 +297,15 @@ async def on_message(message: discord.Message):
     # Process ALL messages from monitored channels (no filtering)
     try:
         message_data = format_message_for_api(message)
-        await send_to_vercel(message_data)
+        
+        # Send to Firebase (primary)
+        if db:
+            await add_message_to_firebase(message.channel.id, message_data)
+        
+        # Send to Vercel (backup)
+        if WEBHOOK_URL:
+            await send_to_vercel(message_data)
+        
         logger.info(f"📤 Processed: {message.author.display_name} in #{message.channel.name}")
     except Exception as e:
         logger.error(f"❌ Error processing message: {e}")
@@ -185,6 +319,7 @@ async def health_check(request):
         "client_ready": discord_client.is_ready(),
         "guilds": len(discord_client.guilds) if discord_client.is_ready() else 0,
         "webhook_configured": bool(WEBHOOK_URL),
+        "firebase_configured": bool(db),
         "monitored_channels": len(CHANNEL_NAMES),
         "timestamp": datetime.now().isoformat()
     })
@@ -209,10 +344,6 @@ async def main():
         
         if not DISCORD_TOKEN:
             logger.error("❌ DISCORD_TOKEN environment variable not set")
-            return
-        
-        if not WEBHOOK_URL:
-            logger.error("❌ WEBHOOK_URL environment variable not set")
             return
         
         logger.warning("⚠️ WARNING: Using user token violates Discord ToS")
