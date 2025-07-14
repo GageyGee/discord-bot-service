@@ -7,7 +7,6 @@ import json
 from datetime import datetime
 
 import discord
-from discord.ext import commands
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,10 +34,9 @@ CHANNEL_NAMES = {
     1316784867962519603: "SECRET SOCIETY",
 }
 
-# Discord bot setup (discord.py compatible)
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Discord client setup (for user token - NOT RECOMMENDED)
+# WARNING: This violates Discord ToS and can result in account ban
+discord_client = discord.Client()
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
@@ -113,16 +111,16 @@ def format_message_for_api(message: discord.Message) -> dict:
         "reply": reply_info
     }
 
-@bot.event
+@discord_client.event
 async def on_ready():
-    logger.info(f'🤖 Discord bot logged in as {bot.user}')
-    logger.info(f'🔗 Connected to {len(bot.guilds)} guilds')
+    logger.info(f'🤖 Discord client logged in as {discord_client.user}')
+    logger.info(f'🔗 Connected to {len(discord_client.guilds)} guilds')
     logger.info(f'🎯 Monitoring {len(CHANNEL_NAMES)} channels')
     logger.info(f'📡 Webhook URL configured: {bool(WEBHOOK_URL)}')
     logger.info(f'📡 Webhook URL: {WEBHOOK_URL}')
     
     # Send startup notification to all channels
-    for guild in bot.guilds:
+    for guild in discord_client.guilds:
         logger.info(f'🏠 Guild: {guild.name} ({guild.id})')
         for channel_id in CHANNEL_NAMES.keys():
             channel = guild.get_channel(channel_id)
@@ -131,9 +129,13 @@ async def on_ready():
             else:
                 logger.warning(f'❌ Channel not found: {channel_id} ({CHANNEL_NAMES[channel_id]})')
 
-@bot.event
+@discord_client.event
 async def on_message(message):
-    # Don't process bot messages
+    # Don't process own messages (important for user tokens)
+    if message.author == discord_client.user:
+        return
+    
+    # Don't process other bot messages
     if message.author.bot:
         return
     
@@ -167,10 +169,7 @@ async def on_message(message):
     except Exception as e:
         logger.error(f"❌ Error processing message: {e}")
 
-    # Process commands (required for commands.Bot)
-    await bot.process_commands(message)
-
-@bot.event
+@discord_client.event
 async def on_error(event, *args, **kwargs):
     logger.error(f'❌ Discord error in {event}: {args[0] if args else "Unknown"}')
 
@@ -180,12 +179,13 @@ from aiohttp import web
 async def health_check(request):
     return web.json_response({
         "status": "healthy",
-        "bot_ready": bot.is_ready(),
-        "guilds": len(bot.guilds) if bot.is_ready() else 0,
+        "client_ready": discord_client.is_ready(),
+        "guilds": len(discord_client.guilds) if discord_client.is_ready() else 0,
         "webhook_configured": bool(WEBHOOK_URL),
         "webhook_url": WEBHOOK_URL,
         "monitored_channels": len(CHANNEL_NAMES),
-        "python_version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}"
+        "python_version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
+        "user": str(discord_client.user) if discord_client.user else "Not logged in"
     })
 
 async def start_web_server():
@@ -203,7 +203,7 @@ async def start_web_server():
     logger.info(f"🌐 Health check server started on port {port}")
 
 async def main():
-    """Main function to run both Discord bot and web server"""
+    """Main function to run both Discord client and web server"""
     logger.info(f"🐍 Python version: {os.sys.version}")
     
     if not DISCORD_TOKEN:
@@ -214,21 +214,23 @@ async def main():
         logger.error("❌ WEBHOOK_URL environment variable not set")
         return
     
+    logger.warning("⚠️ WARNING: Using user token violates Discord ToS and may result in account ban!")
+    
     # Start web server for health checks
     await start_web_server()
     
-    # Start Discord bot
+    # Start Discord client with user token
     try:
-        logger.info("🚀 Starting Discord bot...")
-        await bot.start(DISCORD_TOKEN)
+        logger.info("🚀 Starting Discord client...")
+        await discord_client.start(DISCORD_TOKEN)
     except Exception as e:
-        logger.error(f"❌ Failed to start Discord bot: {e}")
+        logger.error(f"❌ Failed to start Discord client: {e}")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user")
+        logger.info("🛑 Client stopped by user")
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
 
