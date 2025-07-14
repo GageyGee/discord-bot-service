@@ -25,6 +25,7 @@ logger.addHandler(console_handler)
 # Configuration
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Your Vercel API endpoint
+GUILD_ID = os.getenv('GUILD_ID')  # Optional: Specific Discord Server ID to monitor
 
 # Channel configuration
 CHANNEL_NAMES = {
@@ -127,16 +128,55 @@ async def on_ready():
     logger.info(f'🔗 Connected to {len(discord_client.guilds)} guilds')
     logger.info(f'🎯 Monitoring {len(CHANNEL_NAMES)} channels')
     logger.info(f'📡 Webhook URL configured: {bool(WEBHOOK_URL)}')
+    logger.info(f'🏠 Guild ID filter: {GUILD_ID if GUILD_ID else "None (monitoring all guilds)"}')
     
-    # Send startup notification to all channels
+    # DEBUG: List all available guilds and channels
+    logger.info("=== DEBUG: Available Guilds ===")
+    target_guild = None
+    
     for guild in discord_client.guilds:
-        logger.info(f'🏠 Guild: {guild.name} ({guild.id})')
+        logger.info(f'🏠 Guild: {guild.name} (ID: {guild.id})')
+        
+        # If GUILD_ID is specified, only look in that guild
+        if GUILD_ID and str(guild.id) == str(GUILD_ID):
+            target_guild = guild
+            logger.info(f'   ✅ This is the target guild!')
+        elif not GUILD_ID:
+            # Show channels for all guilds if no specific guild is set
+            logger.info(f'   📋 Available channels in {guild.name}:')
+            for channel in guild.channels:
+                if hasattr(channel, 'name'):  # Text channels have names
+                    logger.info(f'      #{channel.name} (ID: {channel.id})')
+    
+    # If specific guild is set, show only that guild's channels
+    if GUILD_ID and target_guild:
+        logger.info(f"=== Channels in target guild: {target_guild.name} ===")
+        for channel in target_guild.channels:
+            if hasattr(channel, 'name'):
+                logger.info(f'   #{channel.name} (ID: {channel.id})')
+    elif GUILD_ID and not target_guild:
+        logger.error(f"❌ Could not find guild with ID: {GUILD_ID}")
+        logger.info("Available guild IDs:")
+        for guild in discord_client.guilds:
+            logger.info(f"   - {guild.name}: {guild.id}")
+        return
+    
+    logger.info("=== Looking for monitored channels ===")
+    # Check for monitored channels
+    found_channels = 0
+    guilds_to_check = [target_guild] if target_guild else discord_client.guilds
+    
+    for guild in guilds_to_check:
+        logger.info(f'🔍 Checking guild: {guild.name} (ID: {guild.id})')
         for channel_id in CHANNEL_NAMES.keys():
             channel = guild.get_channel(channel_id)
             if channel:
-                logger.info(f'✅ Found channel: #{channel.name} ({channel_id})')
+                logger.info(f'✅ Found channel: #{channel.name} ({channel_id}) in {guild.name}')
+                found_channels += 1
             else:
                 logger.warning(f'❌ Channel not found: {channel_id} ({CHANNEL_NAMES[channel_id]})')
+    
+    logger.info(f"📊 Found {found_channels}/{len(CHANNEL_NAMES)} monitored channels")
 
 # Process incoming messages - same pattern as your working script
 @discord_client.event
@@ -152,6 +192,10 @@ async def on_message(message: discord.Message):
     
     # Don't process other bot messages
     if message.author.bot:
+        return
+    
+    # If GUILD_ID is specified, only process messages from that guild
+    if GUILD_ID and str(message.guild.id) != str(GUILD_ID):
         return
     
     # Check if message is in a monitored channel
@@ -224,6 +268,11 @@ async def main():
             return
         
         logger.warning("⚠️ WARNING: Using user token violates Discord ToS and may result in account ban!")
+        
+        if GUILD_ID:
+            logger.info(f"🏠 Targeting specific guild ID: {GUILD_ID}")
+        else:
+            logger.info("🌐 Monitoring all accessible guilds")
         
         # Start web server for health checks
         await start_web_server()
