@@ -199,10 +199,10 @@ async def on_message(message: discord.Message):
         logger.info(f"⏭️ Skipping own message")
         return
     
-    # Don't process other bot messages
+    # Don't process other bot messages (TEMPORARILY DISABLED FOR TESTING)
     if message.author.bot:
-        logger.info(f"⏭️ Skipping bot message from {message.author.display_name}")
-        return
+        logger.info(f"⚠️ PROCESSING bot message from {message.author.display_name} (testing mode)")
+        # return  # Comment this out to allow bot messages for testing
     
     # If GUILD_ID is specified, only process messages from that guild
     if GUILD_ID and str(message.guild.id) != str(GUILD_ID):
