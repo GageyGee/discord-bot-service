@@ -181,26 +181,40 @@ async def on_ready():
 # Process incoming messages - same pattern as your working script
 @discord_client.event
 async def on_message(message: discord.Message):
+    # DEBUG: Log every single message we receive
+    logger.info(f"🔍 DEBUG: Received message from {message.author.display_name} in #{message.channel.name}")
+    logger.info(f"   - Author ID: {message.author.id}")
+    logger.info(f"   - Is bot: {message.author.bot}")
+    logger.info(f"   - Channel ID: {message.channel.id}")
+    logger.info(f"   - Guild: {message.guild.name if message.guild else 'DM'}")
+    logger.info(f"   - Content preview: {message.content[:50]}...")
+    
     # Skip messages from Rick since there's already a Rick bot in Telegram
     if message.author.display_name.lower() == "rick":
-        logger.info(f"Skipping message from Rick (already have Rick bot in Telegram)")
+        logger.info(f"⏭️ Skipping message from Rick (already have Rick bot in Telegram)")
         return
     
     # Don't process own messages (important for user tokens)
     if message.author == discord_client.user:
+        logger.info(f"⏭️ Skipping own message")
         return
     
     # Don't process other bot messages
     if message.author.bot:
+        logger.info(f"⏭️ Skipping bot message from {message.author.display_name}")
         return
     
     # If GUILD_ID is specified, only process messages from that guild
     if GUILD_ID and str(message.guild.id) != str(GUILD_ID):
+        logger.info(f"⏭️ Skipping message from different guild: {message.guild.name}")
         return
     
     # Check if message is in a monitored channel
     if message.channel.id not in CHANNEL_NAMES:
+        logger.info(f"⏭️ Skipping message from unmonitored channel: #{message.channel.name}")
         return
+    
+    logger.info(f"✅ Processing message from monitored channel #{message.channel.name}")
     
     # Filter Discord promotional content
     if message.content:
@@ -211,17 +225,21 @@ async def on_message(message: discord.Message):
         ]
         
         if any(keyword in content_lower for keyword in discord_keywords):
-            logger.info(f"🚫 Blocked promotional content")
+            logger.info(f"🚫 Blocked promotional content: {message.content[:100]}...")
             return
     
     # Format and send message to Vercel
     try:
+        logger.info(f"🚀 Formatting message for webhook...")
         message_data = format_message_for_api(message)
+        logger.info(f"📤 Sending to webhook: {message_data}")
         await send_to_vercel(message_data)
         
         logger.info(f"📤 Processed message from #{message.channel.name}: {message.author.display_name} - {message.content[:50]}...")
     except Exception as e:
         logger.error(f"❌ Error processing message: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 # Health check endpoint (for Render)
 from aiohttp import web
