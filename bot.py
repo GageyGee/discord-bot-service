@@ -37,9 +37,14 @@ CHANNEL_NAMES = {
 
 # Discord client setup (for user token - NOT RECOMMENDED)
 # WARNING: This violates Discord ToS and can result in account ban
-intents = discord.Intents.default()
-intents.message_content = True
-discord_client = discord.Client(intents=intents)
+try:
+    # Try to use intents (discord.py 1.5+)
+    intents = discord.Intents.default()
+    intents.message_content = True
+    discord_client = discord.Client(intents=intents)
+except AttributeError:
+    # Fallback for older discord.py versions (pre-1.5)
+    discord_client = discord.Client()
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
@@ -208,6 +213,7 @@ async def start_web_server():
 async def main():
     """Main function to run both Discord client and web server"""
     logger.info(f"🐍 Python version: {os.sys.version}")
+    logger.info(f"📦 Discord.py version: {discord.__version__}")
     
     if not DISCORD_TOKEN:
         logger.error("❌ DISCORD_TOKEN environment variable not set")
@@ -231,12 +237,21 @@ async def main():
     try:
         logger.info("🚀 Starting Discord client...")
         logger.info(f"🔑 Token starts with: {DISCORD_TOKEN[:10]}...")
-        await discord_client.start(DISCORD_TOKEN, bot=False)  # bot=False for user tokens
-    except discord.LoginFailure:
-        logger.error("❌ Invalid token. Please check your DISCORD_TOKEN environment variable.")
-        logger.error("💡 Make sure you're using a user account token, not a bot token.")
+        
+        # Try different start methods based on discord.py version
+        try:
+            # For newer versions that support bot parameter
+            await discord_client.start(DISCORD_TOKEN, bot=False)
+        except TypeError:
+            # For older versions that don't support bot parameter
+            await discord_client.start(DISCORD_TOKEN)
+            
     except Exception as e:
-        logger.error(f"❌ Failed to start Discord client: {e}")
+        if "Improper token" in str(e) or "login" in str(e).lower():
+            logger.error("❌ Invalid token. Please check your DISCORD_TOKEN environment variable.")
+            logger.error("💡 Make sure you're using a user account token, not a bot token.")
+        else:
+            logger.error(f"❌ Failed to start Discord client: {e}")
 
 if __name__ == "__main__":
     try:
