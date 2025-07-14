@@ -7,11 +7,20 @@ import json
 from datetime import datetime
 
 import discord
-from discord.ext import commands
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# Add console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s - %(message)s")
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 # Configuration
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -35,16 +44,8 @@ CHANNEL_NAMES = {
     1316784867962519603: "SECRET SOCIETY",
 }
 
-# Discord client setup (for user token - NOT RECOMMENDED)
-# WARNING: This violates Discord ToS and can result in account ban
-try:
-    # Try to use intents (discord.py 1.5+)
-    intents = discord.Intents.default()
-    intents.message_content = True
-    discord_client = discord.Client(intents=intents)
-except AttributeError:
-    # Fallback for older discord.py versions (pre-1.5)
-    discord_client = discord.Client()
+# Discord client setup - using same pattern as your working Telegram bridge
+discord_client = discord.Client()
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
@@ -119,13 +120,13 @@ def format_message_for_api(message: discord.Message) -> dict:
         "reply": reply_info
     }
 
+# Log on_ready event - same pattern as your working script
 @discord_client.event
 async def on_ready():
-    logger.info(f'🤖 Discord client logged in as {discord_client.user}')
+    logger.info(f"Discord client `{discord_client.user}` logged in.")
     logger.info(f'🔗 Connected to {len(discord_client.guilds)} guilds')
     logger.info(f'🎯 Monitoring {len(CHANNEL_NAMES)} channels')
     logger.info(f'📡 Webhook URL configured: {bool(WEBHOOK_URL)}')
-    logger.info(f'📡 Webhook URL: {WEBHOOK_URL}')
     
     # Send startup notification to all channels
     for guild in discord_client.guilds:
@@ -137,8 +138,14 @@ async def on_ready():
             else:
                 logger.warning(f'❌ Channel not found: {channel_id} ({CHANNEL_NAMES[channel_id]})')
 
+# Process incoming messages - same pattern as your working script
 @discord_client.event
-async def on_message(message):
+async def on_message(message: discord.Message):
+    # Skip messages from Rick since there's already a Rick bot in Telegram
+    if message.author.display_name.lower() == "rick":
+        logger.info(f"Skipping message from Rick (already have Rick bot in Telegram)")
+        return
+    
     # Don't process own messages (important for user tokens)
     if message.author == discord_client.user:
         return
@@ -149,11 +156,6 @@ async def on_message(message):
     
     # Check if message is in a monitored channel
     if message.channel.id not in CHANNEL_NAMES:
-        return
-    
-    # Skip messages from Rick
-    if message.author.display_name.lower() == "rick":
-        logger.info(f"⏭️ Skipping message from Rick")
         return
     
     # Filter Discord promotional content
@@ -176,10 +178,6 @@ async def on_message(message):
         logger.info(f"📤 Processed message from #{message.channel.name}: {message.author.display_name} - {message.content[:50]}...")
     except Exception as e:
         logger.error(f"❌ Error processing message: {e}")
-
-@discord_client.event
-async def on_error(event, *args, **kwargs):
-    logger.error(f'❌ Discord error in {event}: {args[0] if args else "Unknown"}')
 
 # Health check endpoint (for Render)
 from aiohttp import web
@@ -210,55 +208,41 @@ async def start_web_server():
     await site.start()
     logger.info(f"🌐 Health check server started on port {port}")
 
+# Main function to run both clients - same pattern as your working script
 async def main():
-    """Main function to run both Discord client and web server"""
-    logger.info(f"🐍 Python version: {os.sys.version}")
-    logger.info(f"📦 Discord.py version: {discord.__version__}")
-    
-    if not DISCORD_TOKEN:
-        logger.error("❌ DISCORD_TOKEN environment variable not set")
-        return
-    
-    if not WEBHOOK_URL:
-        logger.error("❌ WEBHOOK_URL environment variable not set")
-        return
-    
-    logger.warning("⚠️ WARNING: Using user token violates Discord ToS and may result in account ban!")
-    
-    # Validate token format (user tokens should be longer and not start with Bot)
-    if DISCORD_TOKEN.startswith('Bot '):
-        logger.error("❌ This appears to be a bot token. Please use a user account token.")
-        return
-    
-    # Start web server for health checks
-    await start_web_server()
-    
-    # Start Discord client with user token
     try:
-        logger.info("🚀 Starting Discord client...")
-        logger.info(f"🔑 Token starts with: {DISCORD_TOKEN[:10]}...")
+        logger.info("Starting Discord message bridge...")
+        logger.info(f"🐍 Python version: {os.sys.version}")
+        logger.info(f"📦 Discord.py version: {discord.__version__}")
         
-        # Try different start methods based on discord.py version
-        try:
-            # For newer versions that support bot parameter
-            await discord_client.start(DISCORD_TOKEN, bot=False)
-        except TypeError:
-            # For older versions that don't support bot parameter
-            await discord_client.start(DISCORD_TOKEN)
-            
-    except Exception as e:
-        if "Improper token" in str(e) or "login" in str(e).lower():
-            logger.error("❌ Invalid token. Please check your DISCORD_TOKEN environment variable.")
-            logger.error("💡 Make sure you're using a user account token, not a bot token.")
-        else:
-            logger.error(f"❌ Failed to start Discord client: {e}")
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
+        if not DISCORD_TOKEN:
+            logger.error("❌ DISCORD_TOKEN environment variable not set")
+            return
+        
+        if not WEBHOOK_URL:
+            logger.error("❌ WEBHOOK_URL environment variable not set")
+            return
+        
+        logger.warning("⚠️ WARNING: Using user token violates Discord ToS and may result in account ban!")
+        
+        # Start web server for health checks
+        await start_web_server()
+        
+        # Start Discord client - same pattern as your working Telegram bridge
+        logger.info("Starting Discord client...")
+        await discord_client.start(DISCORD_TOKEN)
+        
     except KeyboardInterrupt:
-        logger.info("🛑 Client stopped by user")
+        logger.info("Bot stopped by user.")
     except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
+        logger.error(f"Unexpected error: {e}")
+    finally:
+        try:
+            await discord_client.close()
+            logger.info("Discord client disconnected.")
+        except:
+            pass
 
-import sys
+# Run the bot - same pattern as your working script
+if __name__ == "__main__":
+    asyncio.run(main())
