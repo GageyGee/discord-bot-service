@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 
 import discord
+from discord.ext import commands
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -218,13 +219,22 @@ async def main():
     
     logger.warning("⚠️ WARNING: Using user token violates Discord ToS and may result in account ban!")
     
+    # Validate token format (user tokens should be longer and not start with Bot)
+    if DISCORD_TOKEN.startswith('Bot '):
+        logger.error("❌ This appears to be a bot token. Please use a user account token.")
+        return
+    
     # Start web server for health checks
     await start_web_server()
     
     # Start Discord client with user token
     try:
         logger.info("🚀 Starting Discord client...")
-        await discord_client.start(DISCORD_TOKEN)
+        logger.info(f"🔑 Token starts with: {DISCORD_TOKEN[:10]}...")
+        await discord_client.start(DISCORD_TOKEN, bot=False)  # bot=False for user tokens
+    except discord.LoginFailure:
+        logger.error("❌ Invalid token. Please check your DISCORD_TOKEN environment variable.")
+        logger.error("💡 Make sure you're using a user account token, not a bot token.")
     except Exception as e:
         logger.error(f"❌ Failed to start Discord client: {e}")
 
