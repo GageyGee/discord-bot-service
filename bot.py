@@ -36,7 +36,9 @@ CHANNEL_NAMES = {
 
 # Discord client setup (for user token - NOT RECOMMENDED)
 # WARNING: This violates Discord ToS and can result in account ban
-discord_client = discord.Client()
+intents = discord.Intents.default()
+intents.message_content = True
+discord_client = discord.Client(intents=intents)
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
