@@ -35,10 +35,10 @@ CHANNEL_NAMES = {
     1316784867962519603: "SECRET SOCIETY",
 }
 
-# Discord bot setup
+# Discord bot setup (py-cord compatible)
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = discord.Bot(intents=intents)
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
@@ -51,13 +51,16 @@ async def send_to_vercel(message_data):
             async with session.post(
                 f"{WEBHOOK_URL}/api/discord/message",
                 json=message_data,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 if response.status == 200:
                     logger.info(f"✅ Message sent to Vercel: {message_data['author_name']}")
                 else:
                     error_text = await response.text()
                     logger.error(f"❌ Failed to send to Vercel: {response.status} - {error_text}")
+    except asyncio.TimeoutError:
+        logger.error("❌ Timeout sending to Vercel")
     except Exception as e:
         logger.error(f"❌ Error sending to Vercel: {e}")
 
@@ -102,7 +105,7 @@ def format_message_for_api(message: discord.Message) -> dict:
     return {
         "channel_id": str(message.channel.id),
         "author_name": message.author.display_name,
-        "author_avatar": str(message.author.avatar.url) if message.author.avatar else None,
+        "author_avatar": str(message.author.display_avatar.url) if message.author.display_avatar else None,
         "content": cleaned_content,
         "timestamp": message.created_at.isoformat(),
         "message_id": str(message.id),
@@ -170,7 +173,6 @@ async def on_error(event, *args, **kwargs):
 
 # Health check endpoint (for Render)
 from aiohttp import web
-import threading
 
 async def health_check(request):
     return web.json_response({
@@ -179,7 +181,8 @@ async def health_check(request):
         "guilds": len(bot.guilds) if bot.is_ready() else 0,
         "webhook_configured": bool(WEBHOOK_URL),
         "webhook_url": WEBHOOK_URL,
-        "monitored_channels": len(CHANNEL_NAMES)
+        "monitored_channels": len(CHANNEL_NAMES),
+        "python_version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}"
     })
 
 async def start_web_server():
@@ -198,6 +201,8 @@ async def start_web_server():
 
 async def main():
     """Main function to run both Discord bot and web server"""
+    logger.info(f"🐍 Python version: {os.sys.version}")
+    
     if not DISCORD_TOKEN:
         logger.error("❌ DISCORD_TOKEN environment variable not set")
         return
@@ -223,3 +228,5 @@ if __name__ == "__main__":
         logger.info("🛑 Bot stopped by user")
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
+
+import sys
