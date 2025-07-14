@@ -35,10 +35,10 @@ CHANNEL_NAMES = {
     1316784867962519603: "SECRET SOCIETY",
 }
 
-# Discord bot setup (py-cord compatible)
+# Discord bot setup (discord.py compatible)
 intents = discord.Intents.default()
 intents.message_content = True
-bot = discord.Bot(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 async def send_to_vercel(message_data):
     """Send message data to Vercel API"""
@@ -166,6 +166,9 @@ async def on_message(message):
         logger.info(f"📤 Processed message from #{message.channel.name}: {message.author.display_name} - {message.content[:50]}...")
     except Exception as e:
         logger.error(f"❌ Error processing message: {e}")
+
+    # Process commands (required for commands.Bot)
+    await bot.process_commands(message)
 
 @bot.event
 async def on_error(event, *args, **kwargs):
